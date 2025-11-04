@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+data/mit-bih-arrhythmia/
+*.pkl
+.DS_Store
