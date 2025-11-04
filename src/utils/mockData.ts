@@ -1,5 +1,144 @@
 import { Episode, ECGData } from '../types';
 
+// Generate demo ECG data with specific pattern: Normal → Brady → Recovery
+// Based on exact physiologic schedule:
+// - Normal sinus: 0-10s, ~78 bpm, R-R 0.77±0.03s, 13 beats
+// - Bradycardia: 10-22s, ~45 bpm, R-R 1.33±0.04s, 9 beats
+// - Recovery: 22-27s, ~70 bpm, R-R 0.86±0.03s, 6 beats
+export function generateDemoECGData(durationSeconds: number = 27, fs: number = 360): ECGData {
+  const numSamples = durationSeconds * fs;
+  const samples = new Float32Array(numSamples);
+  const r_peaks: number[] = [];
+  const hr_series: number[] = [];
+
+  // Box-Muller transform for normal distribution
+  function randomNormal(mean: number, stdDev: number): number {
+    const u1 = Math.random();
+    const u2 = Math.random();
+    const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
+    return mean + z0 * stdDev;
+  }
+
+  // Generate R-R intervals with realistic jitter
+  const rrIntervals: number[] = [];
+
+  // Normal sinus: 13 beats, R-R = 0.77 ± 0.03s
+  for (let i = 0; i < 13; i++) {
+    rrIntervals.push(randomNormal(0.77, 0.03));
+  }
+
+  // Bradycardia: 9 beats, R-R = 1.33 ± 0.04s
+  for (let i = 0; i < 9; i++) {
+    rrIntervals.push(randomNormal(1.33, 0.04));
+  }
+
+  // Recovery: 6 beats, R-R = 0.86 ± 0.03s
+  for (let i = 0; i < 6; i++) {
+    rrIntervals.push(randomNormal(0.86, 0.03));
+  }
+
+  // Convert R-R intervals to cumulative beat times
+  let currentTime = 0;
+  const beatTimes: number[] = [currentTime];
+  for (const rr of rrIntervals) {
+    currentTime += Math.max(0.4, rr); // Clamp minimum RR to 0.4s (150 bpm max)
+    beatTimes.push(currentTime);
+  }
+
+  // Generate ECG waveform for each beat
+  let sampleIdx = 0;
+
+  for (let beatIdx = 0; beatIdx < beatTimes.length && sampleIdx < numSamples; beatIdx++) {
+    const beatStartTime = beatTimes[beatIdx];
+    const beatStartSample = Math.floor(beatStartTime * fs);
+
+    // Skip to beat start time
+    while (sampleIdx < beatStartSample && sampleIdx < numSamples) {
+      samples[sampleIdx] = (Math.random() - 0.5) * 0.02; // Baseline noise
+      sampleIdx++;
+    }
+
+    if (sampleIdx >= numSamples) break;
+
+    // Determine beat characteristics based on phase
+    let pAmp, qrsAmp, tAmp, noiseSigma;
+    if (beatStartTime < 10) {
+      // Normal sinus
+      pAmp = 0.10 + Math.random() * 0.05;
+      qrsAmp = 0.9 + Math.random() * 0.4;
+      tAmp = 0.25 + Math.random() * 0.15;
+      noiseSigma = 0.015 + Math.random() * 0.005;
+    } else if (beatStartTime < 22) {
+      // Bradycardia
+      pAmp = 0.08 + Math.random() * 0.04;
+      qrsAmp = 0.8 + Math.random() * 0.3;
+      tAmp = 0.20 + Math.random() * 0.15;
+      noiseSigma = 0.015 + Math.random() * 0.01;
+    } else {
+      // Recovery
+      pAmp = 0.10 + Math.random() * 0.04;
+      qrsAmp = 0.9 + Math.random() * 0.3;
+      tAmp = 0.25 + Math.random() * 0.15;
+      noiseSigma = 0.015 + Math.random() * 0.005;
+    }
+
+    // Get RR interval for this beat
+    const rrSamples = beatIdx < rrIntervals.length
+      ? Math.floor(rrIntervals[beatIdx] * fs)
+      : Math.floor(0.86 * fs);
+
+    // Record R-peak position
+    const rPeakOffset = Math.floor(rrSamples * 0.05);
+    r_peaks.push(beatStartSample + rPeakOffset);
+
+    // Calculate HR for this beat
+    if (r_peaks.length > 1) {
+      const lastRR = (r_peaks[r_peaks.length - 1] - r_peaks[r_peaks.length - 2]) / fs;
+      const hr = 60 / lastRR;
+      hr_series.push(hr);
+    }
+
+    // Generate one heartbeat waveform
+    for (let i = 0; i < rrSamples && sampleIdx < numSamples; i++) {
+      const phase = i / rrSamples;
+
+      // P wave (at ~80% through previous RR)
+      const pPhase = (phase - 0.8) * 30;
+      const pWave = pAmp * Math.sin(pPhase * 10) * Math.exp(-(pPhase ** 2));
+
+      // QRS complex (at ~5% into beat)
+      const qrsPhase = (phase - 0.05) * 40;
+      const qrs = qrsAmp * Math.sin(qrsPhase * 20) * Math.exp(-(qrsPhase ** 2));
+
+      // T wave (at ~35% into beat)
+      const tPhase = (phase - 0.35) * 15;
+      const tWave = tAmp * Math.sin(tPhase * 8) * Math.exp(-(tPhase ** 2));
+
+      // Baseline wander
+      const baseline = Math.sin(sampleIdx / fs * 0.5) * 0.03;
+
+      // Noise
+      const noise = (Math.random() - 0.5) * noiseSigma * 2;
+
+      samples[sampleIdx] = pWave + qrs + tWave + baseline + noise;
+      sampleIdx++;
+    }
+  }
+
+  // Fill remaining samples with baseline noise
+  while (sampleIdx < numSamples) {
+    samples[sampleIdx] = (Math.random() - 0.5) * 0.02;
+    sampleIdx++;
+  }
+
+  // Add final HR value
+  if (hr_series.length > 0 && r_peaks.length > hr_series.length) {
+    hr_series.push(hr_series[hr_series.length - 1]);
+  }
+
+  return { samples, fs, r_peaks, hr_series };
+}
+
 // Generate mock ECG data
 export function generateMockECGData(durationSeconds: number, fs: number = 250): ECGData {
   const numSamples = durationSeconds * fs;

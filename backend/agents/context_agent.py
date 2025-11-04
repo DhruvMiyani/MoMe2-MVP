@@ -21,11 +21,16 @@ class ContextAgent:
         self.data_dir = data_dir
         # Records with prominent bradycardia
         self.bradycardia_records = ['107', '117', '118', '207', '217']
+        # Path to local MIT-BIH database
+        self.mitbih_local_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            '..',
+            'mit-bih-arrhythmia-database-1.0.0'
+        )
 
     def load_ecg_record(self, record_id: str) -> Tuple[wfdb.Record, wfdb.Annotation]:
         """
-        Load ECG record and annotations from MIT-BIH database.
-        Auto-downloads if not present locally.
+        Load ECG record and annotations from local MIT-BIH database.
 
         Args:
             record_id: MIT-BIH record ID (e.g., '107')
@@ -34,13 +39,15 @@ class ContextAgent:
             Tuple of (record, annotation)
         """
         try:
-            # Auto-downloads from PhysioNet if not present
-            # Use pn_dir parameter to download from PhysioNet
-            record = wfdb.rdrecord(record_id, pn_dir='mitdb')
-            annotation = wfdb.rdann(record_id, 'atr', pn_dir='mitdb')
+            # Load from local MIT-BIH directory
+            record_path = os.path.join(self.mitbih_local_path, record_id)
+            print(f"Loading record from: {record_path}")
+
+            record = wfdb.rdrecord(record_path)
+            annotation = wfdb.rdann(record_path, 'atr')
             return record, annotation
         except Exception as e:
-            raise Exception(f"Error loading record {record_id}: {str(e)}")
+            raise Exception(f"Error loading record {record_id} from {record_path}: {str(e)}")
 
     def extract_patient_context(self, record_id: str) -> Dict:
         """

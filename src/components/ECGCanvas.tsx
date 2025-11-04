@@ -26,7 +26,7 @@ export default function ECGCanvas({
   const [hoveredSegment, setHoveredSegment] = useState(false);
   const [hoverX, setHoverX] = useState(0);
 
-  const { samples, fs, r_peaks } = data;
+  const { samples, fs, r_peaks, hr_series } = data;
 
   // Draw the ECG
   const draw = useCallback(() => {
@@ -72,6 +72,21 @@ export default function ECGCanvas({
     const startSample = Math.max(0, Math.floor(pan * samples.length));
     const endSample = Math.min(samples.length, startSample + width * samplesPerPixel);
 
+    // Calculate HR from R-peaks if not provided
+    const heartRates: number[] = [];
+    if (r_peaks && r_peaks.length > 1) {
+      if (hr_series && hr_series.length === r_peaks.length) {
+        heartRates.push(...hr_series);
+      } else {
+        // Calculate HR from consecutive R-peaks
+        for (let i = 0; i < r_peaks.length - 1; i++) {
+          const rrInterval = (r_peaks[i + 1] - r_peaks[i]) / fs;
+          const hr = 60 / rrInterval;
+          heartRates.push(hr);
+        }
+      }
+    }
+
     // Find min/max for scaling with padding
     let min = Infinity;
     let max = -Infinity;
@@ -114,6 +129,63 @@ export default function ECGCanvas({
         ctx.lineTo(segmentEndPx, height);
         ctx.stroke();
       }
+    }
+
+    // Draw HR highlight boxes - Red for HR < 60 BPM, Green for HR >= 60 BPM
+    if (r_peaks && r_peaks.length > 1 && heartRates.length > 0) {
+      for (let i = 0; i < r_peaks.length - 1; i++) {
+        const hr = heartRates[i];
+        const isBradycardia = hr < 60;
+
+        const peakStart = r_peaks[i];
+        const peakEnd = r_peaks[i + 1];
+
+        // Convert to pixel coordinates
+        const boxStartPx = ((peakStart - startSample) / samplesPerPixel) * zoom;
+        const boxEndPx = ((peakEnd - startSample) / samplesPerPixel) * zoom;
+
+        // Only draw if visible on screen
+        if (boxEndPx > 0 && boxStartPx < width) {
+          const leftX = Math.max(0, boxStartPx);
+          const rightX = Math.min(width, boxEndPx);
+          const boxWidth = rightX - leftX;
+
+          if (boxWidth > 0) {
+            // Color coding
+            const fillColor = isBradycardia ? 'rgba(239, 68, 68, 0.25)' : 'rgba(34, 197, 94, 0.15)';
+            const strokeColor = isBradycardia ? '#EF4444' : '#22c55e';
+            const labelBgColor = isBradycardia ? 'rgba(239, 68, 68, 0.9)' : 'rgba(34, 197, 94, 0.9)';
+
+            // Draw semi-transparent box
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(leftX, 0, boxWidth, height);
+
+            // Draw border (dashed for bradycardia, solid for normal)
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = isBradycardia ? 2 : 1;
+            ctx.setLineDash(isBradycardia ? [5, 3] : []);
+            ctx.strokeRect(leftX, 0, boxWidth, height);
+
+            // Draw HR value label at the top of the box
+            if (boxWidth > 30) { // Only show label if box is wide enough
+              ctx.font = 'bold 11px monospace';
+              const hrText = `${hr.toFixed(0)} bpm`;
+              const textWidth = ctx.measureText(hrText).width;
+              const textX = leftX + (boxWidth - textWidth) / 2;
+
+              // Draw background for text
+              ctx.fillStyle = labelBgColor;
+              ctx.fillRect(textX - 3, 5, textWidth + 6, 16);
+
+              // Draw text
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillText(hrText, textX, 17);
+            }
+          }
+        }
+      }
+
+      ctx.setLineDash([]); // Reset to solid line
     }
 
     // Draw ECG waveform
@@ -166,7 +238,7 @@ export default function ECGCanvas({
     ctx.fillText(`${startTime.toFixed(1)}s`, 10, height - 10);
     ctx.fillText(`${endTime.toFixed(1)}s`, width - 60, height - 10);
 
-  }, [samples, fs, r_peaks, episode, width, height, zoom, pan]);
+  }, [samples, fs, r_peaks, hr_series, episode, width, height, zoom, pan]);
 
   useEffect(() => {
     draw();

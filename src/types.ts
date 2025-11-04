@@ -10,6 +10,7 @@ export interface Recording {
 export interface Episode {
   episode_id: string;
   recording_id: string;
+  patient_id?: string;      // Patient identifier (e.g., MIT-BIH record number)
   type: 'brady';
   start_ts: Date;
   end_ts: Date;
@@ -52,10 +53,22 @@ export interface Review {
 }
 
 export interface ECGData {
-  samples: Float32Array;
-  fs: number;
-  r_peaks: number[]; // Sample indices
-  hr_series?: number[]; // Heart rate at each R-peak
+  samples: Float32Array;      // Primary channel (MLII for MIT-BIH)
+  fs: number;                 // Sampling frequency (Hz)
+  r_peaks: number[];          // R-peak sample indices
+  hr_series?: number[];       // Heart rate at each R-peak (bpm)
+
+  // Multi-channel support (for MIT-BIH and other formats)
+  channels?: {
+    MLII?: Float32Array;      // Modified Limb Lead II
+    V1?: Float32Array;        // Precordial Lead V1
+    V5?: Float32Array;        // Precordial Lead V5
+    [key: string]: Float32Array | undefined;
+  };
+
+  // Metadata
+  duration?: number;          // Duration in seconds
+  recordName?: string;        // Source record name (e.g., MIT-BIH record number)
 }
 
 export interface ConfidenceLevel {

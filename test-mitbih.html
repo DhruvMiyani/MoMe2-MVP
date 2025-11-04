@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MIT-BIH Test</title>
+</head>
+<body>
+    <h1>MIT-BIH Data Test</h1>
+    <div id="output"></div>
+    <script type="module">
+        const output = document.getElementById('output');
+
+        async function testLoad() {
+            try {
+                output.innerHTML += '<p>Loading record 107...</p>';
+                const response = await fetch('/data/mitbih/107.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                output.innerHTML += `<p>✓ Loaded record ${data.recordName}</p>`;
+                output.innerHTML += `<p>  - Sampling rate: ${data.fs} Hz</p>`;
+                output.innerHTML += `<p>  - Duration: ${(data.length / data.fs).toFixed(1)}s</p>`;
+                output.innerHTML += `<p>  - Channels: ${data.channelNames.join(', ')}</p>`;
+                output.innerHTML += `<p>  - Annotations: ${data.annotations.length}</p>`;
+
+                // Check for R-peaks
+                const rpeaks = data.annotations.filter(a => ['N', 'V', 'L', 'R'].includes(a.type));
+                output.innerHTML += `<p>  - R-peaks: ${rpeaks.length}</p>`;
+
+                // Calculate heart rates
+                const hrs = [];
+                for (let i = 0; i < rpeaks.length - 1; i++) {
+                    const rrInterval = (rpeaks[i + 1].sample - rpeaks[i].sample) / data.fs;
+                    const hr = 60 / rrInterval;
+                    hrs.push(hr);
+                }
+
+                const bradyBeats = hrs.filter(hr => hr < 60).length;
+                output.innerHTML += `<p>  - Beats with HR < 60: ${bradyBeats} / ${hrs.length}</p>`;
+                output.innerHTML += `<p>  - Min HR: ${Math.min(...hrs).toFixed(1)} bpm</p>`;
+                output.innerHTML += `<p>  - Max HR: ${Math.max(...hrs).toFixed(1)} bpm</p>`;
+
+            } catch (error) {
+                output.innerHTML += `<p style="color: red;">✗ Error: ${error.message}</p>`;
+                console.error(error);
+            }
+        }
+
+        testLoad();
+    </script>
+</body>
+</html>
