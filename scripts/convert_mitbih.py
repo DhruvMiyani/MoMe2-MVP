@@ -16,15 +16,18 @@ import json
 import os
 from pathlib import Path
 
-# Records to download and convert
-# These records are known to contain bradycardia or interesting arrhythmias
+# Records to convert - TOP 10 with most bradycardia (sorted by bradycardia beat count)
 RECORDS_TO_CONVERT = [
-    '100',  # Normal sinus rhythm
-    '106',  # Contains bradycardia
-    '107',  # Contains bradycardia and various arrhythmias
-    '119',  # Atrial fibrillation with slow ventricular response
-    '200',  # Some bradycardia episodes
-    '231',  # Contains bradycardia
+    '117',  # 1518 bradycardia beats
+    '124',  # 1475 bradycardia beats
+    '123',  # 1408 bradycardia beats
+    '108',  # 1083 bradycardia beats
+    '113',  # 1003 bradycardia beats
+    '202',  # 931 bradycardia beats
+    '121',  # 853 bradycardia beats
+    '201',  # 781 bradycardia beats
+    '106',  # 723 bradycardia beats
+    '114',  # 645 bradycardia beats
 ]
 
 def convert_record_to_json(record_name: str, output_dir: Path, max_duration_sec: int = 300):

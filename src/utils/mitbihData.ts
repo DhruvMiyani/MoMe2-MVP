@@ -6,11 +6,11 @@
 import { Episode, ECGData, QualityFlags } from '../types';
 import { loadMITBIHRecord, detectBradycardiaSegments, convertToECGData } from './mitbih';
 
-// All available patient records (show all patients in all tabs)
-const MITBIH_PATIENTS = ['100', '106', '107', '119', '200', '231'];
+// TOP 10 patients with most bradycardia (sorted by bradycardia beat count)
+const MITBIH_PATIENTS = ['117', '124', '123', '108', '113', '202', '121', '201', '106', '114'];
 
-// All available patient records (for All Events view)
-const ALL_MITBIH_PATIENTS = ['100', '106', '107', '119', '200', '231'];
+// All available patient records (same as MITBIH_PATIENTS)
+const ALL_MITBIH_PATIENTS = ['117', '124', '123', '108', '113', '202', '121', '201', '106', '114'];
 
 /**
  * Get quality flags from signal analysis
