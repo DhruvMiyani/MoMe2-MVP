@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '../store';
-import { generateMockECGData } from '../utils/mockData';
+import { loadECGDataForEpisode, isMITBIHEpisode } from '../utils/mitbihData';
 import ECGCanvas from './ECGCanvas';
 import ConfidenceChip from './ConfidenceChip';
 import QualityBadge from './QualityBadge';
@@ -36,12 +36,25 @@ export default function EventReview() {
 
   const episode = episodes.find((ep) => ep.episode_id === selectedEpisodeId);
 
-  // Load ECG data when episode changes
+  // Load ONLY REAL MIT-BIH ECG data when episode changes
   useEffect(() => {
     if (episode) {
-      const mockData = generateMockECGData(60, 250);
-      setEcgData(mockData);
       setReviewStartTime(Date.now());
+
+      if (isMITBIHEpisode(episode)) {
+        console.log('Loading REAL MIT-BIH ECG data for episode:', episode.episode_id);
+        loadECGDataForEpisode(episode)
+          .then(data => {
+            setEcgData(data);
+          })
+          .catch(err => {
+            console.error('CRITICAL ERROR: Failed to load MIT-BIH data:', err);
+            setEcgData(null);
+          });
+      } else {
+        console.error('ERROR: Non-MIT-BIH episode detected - cannot load');
+        setEcgData(null);
+      }
     }
   }, [episode, setEcgData]);
 

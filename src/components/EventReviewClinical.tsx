@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '../store';
-import { generateMockECGData } from '../utils/mockData';
 import { loadECGDataForEpisode, isMITBIHEpisode } from '../utils/mitbihData';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
@@ -33,17 +32,17 @@ export default function EventReviewClinical() {
 
   const episode = episodes.find((ep) => ep.episode_id === selectedEpisodeId);
 
-  // Load ECG data
+  // Load ECG data - ONLY REAL MIT-BIH DATA
   useEffect(() => {
     if (episode) {
       setReviewStartTime(Date.now());
 
-      // Load real MIT-BIH data if available, otherwise use mock data
+      // Load ONLY real MIT-BIH data - NO MOCK/SYNTHETIC DATA
       if (isMITBIHEpisode(episode)) {
-        console.log('Loading real MIT-BIH ECG data for episode:', episode.episode_id);
+        console.log('Loading REAL MIT-BIH ECG data for episode:', episode.episode_id);
         loadECGDataForEpisode(episode)
           .then(data => {
-            console.log('Loaded ECG data:', {
+            console.log('Loaded real ECG data:', {
               samples: data.samples.length,
               fs: data.fs,
               duration: data.duration,
@@ -52,14 +51,12 @@ export default function EventReviewClinical() {
             setEcgData(data);
           })
           .catch(err => {
-            console.error('Failed to load MIT-BIH data, falling back to mock:', err);
-            const mockData = generateMockECGData(60, 250);
-            setEcgData(mockData);
+            console.error('CRITICAL ERROR: Failed to load MIT-BIH data:', err);
+            setEcgData(null);
           });
       } else {
-        // Use mock data for non-MIT-BIH episodes
-        const mockData = generateMockECGData(60, 250);
-        setEcgData(mockData);
+        console.error('ERROR: Non-MIT-BIH episode detected - cannot load');
+        setEcgData(null);
       }
     }
   }, [episode]);

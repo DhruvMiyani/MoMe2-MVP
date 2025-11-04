@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { loadECGDataForEpisode, isMITBIHEpisode } from '../utils/mitbihData';
+import { loadECGDataForEpisode, isMITBIHEpisode, loadHeartRateTrend } from '../utils/mitbihData';
 import { ECGData } from '../types';
 
 /**
@@ -50,6 +50,7 @@ export default function ClinicalDashboard() {
   const [loadingECG, setLoadingECG] = useState(false);
   const [allEpisodes, setAllEpisodes] = useState<typeof episodes>([]);
   const [loadingAllEpisodes, setLoadingAllEpisodes] = useState(false);
+  const [hrTrendData, setHrTrendData] = useState<number[]>([]);
 
   // Get current episode or first one from filtered episodes
   const currentEpisode = selectedEpisodeId
@@ -176,6 +177,27 @@ export default function ClinicalDashboard() {
     loadECG();
   }, [currentEpisode]);
 
+  // Load heart rate trend data for the current patient
+  useEffect(() => {
+    async function loadHRTrend() {
+      if (!currentEpisode?.patient_id) {
+        setHrTrendData([]);
+        return;
+      }
+
+      try {
+        console.log(`Loading heart rate trend for ${currentEpisode.patient_id}...`);
+        const { heartRates } = await loadHeartRateTrend(currentEpisode.patient_id);
+        setHrTrendData(heartRates);
+      } catch (error) {
+        console.error('Failed to load heart rate trend:', error);
+        setHrTrendData([]);
+      }
+    }
+
+    loadHRTrend();
+  }, [currentEpisode?.patient_id]);
+
   const totalEvents = filteredEpisodes.length;
   const needsReviewCount = filteredEpisodes.filter((ep) => ep.status === 'needs_review').length;
 
@@ -189,6 +211,36 @@ export default function ClinicalDashboard() {
     if (currentIndex > 0) {
       setSelectedEpisodeId(episodes[currentIndex - 1].episode_id);
     }
+  };
+
+  // Generate SVG path from real heart rate data
+  const generateHRTrendPath = (hrData: number[]): string => {
+    if (hrData.length === 0) {
+      // Return flat line at 80 bpm if no data
+      return "M 0 40 L 1000 40";
+    }
+
+    const width = 1000;
+    const height = 80;
+    const minHR = 30;  // Minimum HR on Y-axis
+    const maxHR = 120; // Maximum HR on Y-axis
+
+    // Convert HR values to SVG coordinates
+    const points = hrData.map((hr, index) => {
+      const x = (index / (hrData.length - 1)) * width;
+      // Invert Y-axis (lower HR = higher Y value in SVG)
+      const normalizedHR = (hr - minHR) / (maxHR - minHR);
+      const y = height - (normalizedHR * height);
+      return { x, y };
+    });
+
+    // Build SVG path using line segments
+    let path = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+      path += ` L ${points[i].x} ${points[i].y}`;
+    }
+
+    return path;
   };
 
   if (!currentEpisode) {
@@ -383,9 +435,9 @@ export default function ClinicalDashboard() {
               {[0, 20, 40, 60, 80].map((y) => (
                 <line key={y} x1="0" y1={y} x2="1000" y2={y} stroke="#e5e7eb" strokeWidth="1" />
               ))}
-              {/* HR trend line */}
+              {/* HR trend line - REAL MIT-BIH DATA */}
               <path
-                d="M 0 45 Q 100 50 200 40 T 400 45 Q 500 35 600 50 T 800 42 Q 900 48 1000 40"
+                d={generateHRTrendPath(hrTrendData)}
                 stroke="#6b7280"
                 strokeWidth="1.5"
                 fill="none"

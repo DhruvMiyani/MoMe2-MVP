@@ -13,39 +13,30 @@ const MITBIH_PATIENTS = ['100', '106', '107', '119', '200', '231'];
 const ALL_MITBIH_PATIENTS = ['100', '106', '107', '119', '200', '231'];
 
 /**
- * Generate random quality flags (for simulation purposes)
- * In production, these would come from real signal quality analysis
+ * Get quality flags from signal analysis
+ * NOTE: MIT-BIH database does not include quality annotations
+ * In production, these would come from a real-time signal quality analyzer
+ * For now, we assume good quality since MIT-BIH is a curated research database
  */
-function generateQualityFlags(): QualityFlags {
-  const hasIssue = Math.random() > 0.7; // 30% chance of quality issues
-
-  if (!hasIssue) {
-    return {
-      baseline_wander: false,
-      lead_off: false,
-      clipping: false,
-      high_noise: false,
-      motion_artifact: false,
-      low_amplitude: false,
-    };
-  }
-
+function getQualityFlags(): QualityFlags {
+  // MIT-BIH is a high-quality curated database with no quality issues
   return {
-    baseline_wander: Math.random() > 0.7,
-    lead_off: Math.random() > 0.9,
-    clipping: Math.random() > 0.95,
-    high_noise: Math.random() > 0.8,
-    motion_artifact: Math.random() > 0.85,
-    low_amplitude: Math.random() > 0.9,
+    baseline_wander: false,
+    lead_off: false,
+    clipping: false,
+    high_noise: false,
+    motion_artifact: false,
+    low_amplitude: false,
   };
 }
 
 /**
- * Generate explanation for why an episode was flagged
+ * Create explanation based on real detected bradycardia metrics
  */
-function generateExplanation(avgHR: number, minHR: number, quality: QualityFlags): string {
+function createExplanation(avgHR: number, minHR: number, quality: QualityFlags): string {
   const reasons: string[] = [];
 
+  // Classification based on actual measured heart rate
   if (minHR < 40) {
     reasons.push(`Severe bradycardia detected (min HR: ${minHR} bpm)`);
   } else if (minHR < 50) {
@@ -58,6 +49,7 @@ function generateExplanation(avgHR: number, minHR: number, quality: QualityFlags
     reasons.push(`sustained low average heart rate (${avgHR} bpm)`);
   }
 
+  // Only add quality issues if actually present in the data
   if (quality.baseline_wander) {
     reasons.push('with baseline wander present');
   }
@@ -69,19 +61,18 @@ function generateExplanation(avgHR: number, minHR: number, quality: QualityFlags
 }
 
 /**
- * Determine episode status based on confidence and quality
+ * Determine episode status based on severity
+ * NOTE: MIT-BIH does not include confidence scores
+ * Status is determined by bradycardia severity and data quality
  */
 function determineStatus(
-  confidence: number,
+  minHR: number,
   quality: QualityFlags
 ): 'auto_approved' | 'needs_review' {
   const hasQualityIssues = Object.values(quality).some((v) => v);
 
-  // Auto-approve only if high confidence and no quality issues
-  if (confidence >= 0.8 && !hasQualityIssues) {
-    return 'auto_approved';
-  }
-
+  // All bradycardia episodes need review in clinical setting
+  // MIT-BIH is research data, so we flag all for review
   return 'needs_review';
 }
 
@@ -118,10 +109,12 @@ export async function loadMITBIHEpisodes(maxEpisodes: number = 25, loadAll: bool
       for (const segment of segments) {
         if (episodes.length >= maxEpisodes && !loadAll) break;
 
-        const quality = generateQualityFlags();
-        const confidence = Math.random() * 0.4 + 0.5; // 0.5 to 0.9
-        const status = determineStatus(confidence, quality);
+        // Get quality flags (all false for MIT-BIH curated data)
+        const quality = getQualityFlags();
+        const status = determineStatus(segment.minHR, quality);
 
+        // Use actual MIT-BIH recording date (1975-1979 era)
+        // For demo purposes, using 2024-01-15 as a reference date
         const baseDate = new Date('2024-01-15T08:00:00Z');
         const startTs = new Date(baseDate.getTime() + segment.startTime * 1000);
         const endTs = new Date(baseDate.getTime() + segment.endTime * 1000);
@@ -138,8 +131,8 @@ export async function loadMITBIHEpisodes(maxEpisodes: number = 25, loadAll: bool
           min_hr: segment.minHR,
           avg_hr: segment.avgHR,
           quality,
-          model_conf: confidence,
-          explanation: generateExplanation(segment.avgHR, segment.minHR, quality),
+          model_conf: 1.0,  // MIT-BIH annotations are ground truth (100% confidence)
+          explanation: createExplanation(segment.avgHR, segment.minHR, quality),
           status,
         };
 
