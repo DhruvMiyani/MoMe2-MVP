@@ -201,16 +201,40 @@ export default function ClinicalDashboard() {
   const totalEvents = filteredEpisodes.length;
   const needsReviewCount = filteredEpisodes.filter((ep) => ep.status === 'needs_review').length;
 
+  // Get episodes for the current patient only
+  const currentPatientEpisodes = useMemo(() => {
+    if (!currentEpisode?.patient_id) return [];
+    return episodesByPatient[currentEpisode.patient_id]?.episodes || [];
+  }, [currentEpisode?.patient_id, episodesByPatient]);
+
+  // Find current episode index within the current patient's episodes
+  const currentPatientEpisodeIndex = useMemo(() => {
+    return currentPatientEpisodes.findIndex(ep => ep.episode_id === currentEpisode?.episode_id);
+  }, [currentPatientEpisodes, currentEpisode?.episode_id]);
+
   const moveToNext = () => {
-    if (currentIndex < episodes.length - 1) {
-      setSelectedEpisodeId(episodes[currentIndex + 1].episode_id);
+    // Navigate to next episode within the SAME patient
+    if (currentPatientEpisodeIndex < currentPatientEpisodes.length - 1) {
+      setSelectedEpisodeId(currentPatientEpisodes[currentPatientEpisodeIndex + 1].episode_id);
     }
   };
 
   const moveToPrevious = () => {
-    if (currentIndex > 0) {
-      setSelectedEpisodeId(episodes[currentIndex - 1].episode_id);
+    // Navigate to previous episode within the SAME patient
+    if (currentPatientEpisodeIndex > 0) {
+      setSelectedEpisodeId(currentPatientEpisodes[currentPatientEpisodeIndex - 1].episode_id);
     }
+  };
+
+  const handleDiscard = () => {
+    // Move to next episode within same patient before discarding
+    if (currentPatientEpisodeIndex < currentPatientEpisodes.length - 1) {
+      setSelectedEpisodeId(currentPatientEpisodes[currentPatientEpisodeIndex + 1].episode_id);
+    } else if (currentPatientEpisodeIndex > 0) {
+      setSelectedEpisodeId(currentPatientEpisodes[currentPatientEpisodeIndex - 1].episode_id);
+    }
+    // TODO: Add logic to actually remove/mark episode as discarded
+    console.log('Discarded episode:', currentEpisode?.episode_id);
   };
 
   // Generate SVG path from real heart rate data
@@ -518,14 +542,27 @@ export default function ClinicalDashboard() {
                 Mark unreviewed
               </button>
 
-              <button className="px-4 py-2 bg-white border border-gray-400 rounded hover:bg-gray-100 text-sm text-gray-800">
+              <button
+                onClick={handleDiscard}
+                className="px-4 py-2 bg-white border border-gray-400 rounded hover:bg-gray-100 text-sm text-gray-800"
+              >
                 Discard
               </button>
 
-              <button className="p-2 bg-white border border-gray-400 rounded hover:bg-gray-100 text-gray-700">
+              <button
+                onClick={moveToNext}
+                disabled={currentPatientEpisodeIndex >= currentPatientEpisodes.length - 1}
+                className="p-2 bg-white border border-gray-400 rounded hover:bg-gray-100 text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Next event in this patient (↓)"
+              >
                 ▼
               </button>
-              <button className="p-2 bg-white border border-gray-400 rounded hover:bg-gray-100 text-gray-700">
+              <button
+                onClick={moveToPrevious}
+                disabled={currentPatientEpisodeIndex <= 0}
+                className="p-2 bg-white border border-gray-400 rounded hover:bg-gray-100 text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Previous event in this patient (↑)"
+              >
                 ▲
               </button>
             </div>
@@ -555,10 +592,19 @@ function CombinedECGStrip({ data, episode }: { data: ECGData | null; episode: an
   const [scrollPosition, setScrollPosition] = React.useState(0);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [playbackSpeed, setPlaybackSpeed] = React.useState(1); // 1x, 2x, 4x
+  const [hoveredBpmLabel, setHoveredBpmLabel] = React.useState<{ hr: number; x: number; y: number } | null>(null);
+  const [llmExplanation, setLlmExplanation] = React.useState<string | null>(null);
+  const [loadingExplanation, setLoadingExplanation] = React.useState(false);
+  const explanationCache = React.useRef<Map<number, string>>(new Map());
   const containerRef = React.useRef<HTMLDivElement>(null);
   const animationRef = React.useRef<number>();
 
-  const totalWidth = 3000; // Extended width for scrolling
+  // Calculate totalWidth based on actual data duration
+  // Use 100 pixels per second for consistent time scale
+  const PIXELS_PER_SECOND = 100;
+  const dataDurationSeconds = data ? data.samples.length / data.fs : 30;
+  const totalWidth = Math.round(dataDurationSeconds * PIXELS_PER_SECOND);
+
   const viewWidth = 1200;
   const leads = ['Lead I', 'Lead II', 'Lead III'];
 
@@ -598,6 +644,108 @@ function CombinedECGStrip({ data, episode }: { data: ECGData | null; episode: an
 
   const togglePlay = () => {
     setIsPlaying(!isPlaying);
+  };
+
+  // Fetch GPT-5 explanation when hovering over a BPM label
+  React.useEffect(() => {
+    if (!hoveredBpmLabel) {
+      setLlmExplanation(null);
+      setLoadingExplanation(false);
+      return;
+    }
+
+    const hr = hoveredBpmLabel.hr;
+
+    // Check cache first
+    if (explanationCache.current.has(hr)) {
+      setLlmExplanation(explanationCache.current.get(hr)!);
+      setLoadingExplanation(false);
+      return;
+    }
+
+    // Fetch from GPT-5
+    const fetchExplanation = async () => {
+      setLoadingExplanation(true);
+
+      try {
+        const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+
+        if (!apiKey) {
+          // Use fallback if no API key
+          const fallback = generateFallbackExplanation(hr);
+          explanationCache.current.set(hr, fallback);
+          setLlmExplanation(fallback);
+          setLoadingExplanation(false);
+          return;
+        }
+
+        const prompt = `You are a clinical AI assistant. Provide a brief, 2-sentence explanation for a heart rate of ${hr} bpm detected in an ECG recording.
+
+Context:
+- Normal heart rate: 60-100 bpm
+- Bradycardia: < 60 bpm
+- Current heart rate: ${hr} bpm
+- Severity: ${hr < 40 ? 'Severe' : hr < 50 ? 'Moderate' : hr < 60 ? 'Mild bradycardia' : 'Normal'}
+
+Provide a concise clinical explanation focusing on the significance of this specific heart rate measurement.`;
+
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-5',
+            messages: [
+              {
+                role: 'system',
+                content: 'You are a clinical AI assistant specializing in cardiac arrhythmia interpretation. Provide concise, accurate clinical explanations.',
+              },
+              {
+                role: 'user',
+                content: prompt,
+              },
+            ],
+            temperature: 0.3,
+            max_tokens: 150,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const explanation = data.choices[0].message.content.trim();
+
+        // Cache the result
+        explanationCache.current.set(hr, explanation);
+        setLlmExplanation(explanation);
+      } catch (error) {
+        console.error('Failed to fetch GPT-5 explanation:', error);
+        const fallback = generateFallbackExplanation(hr);
+        explanationCache.current.set(hr, fallback);
+        setLlmExplanation(fallback);
+      } finally {
+        setLoadingExplanation(false);
+      }
+    };
+
+    fetchExplanation();
+  }, [hoveredBpmLabel]);
+
+  // Generate fallback explanation without API
+  const generateFallbackExplanation = (hr: number): string => {
+    if (hr < 40) {
+      return `Severe bradycardia at ${hr} bpm. Heart rate significantly below normal threshold (60 bpm), indicating critical slowing of cardiac rhythm. Immediate clinical evaluation recommended.`;
+    } else if (hr < 50) {
+      return `Moderate bradycardia at ${hr} bpm. Heart rate substantially below normal threshold (60 bpm), representing clinically significant slowing. Review patient symptoms and clinical context.`;
+    } else if (hr < 60) {
+      return `Mild bradycardia at ${hr} bpm. Heart rate below normal threshold (60 bpm) but within acceptable range for some patients. Monitor and correlate with clinical presentation.`;
+    } else {
+      return `Normal sinus rhythm at ${hr} bpm. Heart rate within normal physiological range (60-100 bpm). No intervention required.`;
+    }
   };
 
   const handleSpeedChange = () => {
@@ -735,7 +883,9 @@ function CombinedECGStrip({ data, episode }: { data: ECGData | null; episode: an
                       return null;
                     }
 
-                    const x = (peakIdx / data.samples.length) * totalWidth;
+                    // Calculate position based on TIME in seconds, not sample index
+                    const timeInSeconds = peakIdx / data.fs;
+                    const x = (timeInSeconds / dataDurationSeconds) * totalWidth;
                     const voltage = data.samples[peakIdx];
 
                     // Skip if voltage is undefined or NaN
@@ -769,75 +919,97 @@ function CombinedECGStrip({ data, episode }: { data: ECGData | null; episode: an
             })}
 
             {/* Time markers (shared across all leads) */}
-            {Array.from({ length: 30 }, (_, i) => {
-              const x = (i / 30) * totalWidth;
-              return (
-                <g key={i}>
-                  <line x1={x} y1="0" x2={x} y2="450" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
-                  <text x={x + 5} y="440" fontSize="9" fill="#6b7280">
-                    {i}s
-                  </text>
-                </g>
-              );
-            })}
+            {(() => {
+              // Show time markers every 5 seconds for readability
+              const markerInterval = 5; // seconds
+              const numMarkers = Math.floor(dataDurationSeconds / markerInterval);
 
-            {/* Heart Rate region highlights - Red: HR < 60 bpm, Green: HR >= 60 bpm */}
-            {data.r_peaks && data.r_peaks.length > 1 && data.r_peaks.slice(0, -1).map((rpeak, i) => {
-              const rrInterval = (data.r_peaks![i + 1] - rpeak) / data.fs;
-              const hr = 60 / rrInterval;
+              return Array.from({ length: numMarkers + 1 }, (_, i) => {
+                const timeInSeconds = i * markerInterval;
+                const x = (timeInSeconds / dataDurationSeconds) * totalWidth;
 
-              // Color coding: Red for bradycardia (< 60), Green for normal (>= 60)
-              const isBradycardia = hr < 60;
-              const fillColor = isBradycardia ? 'rgba(239, 68, 68, 0.15)' : 'rgba(34, 197, 94, 0.08)';
-              const strokeColor = isBradycardia ? '#ef4444' : '#22c55e';
-              const labelBgColor = isBradycardia ? '#ef4444' : '#22c55e';
+                return (
+                  <g key={i}>
+                    <line x1={x} y1="0" x2={x} y2="450" stroke="#e5e7eb" strokeWidth="0.5" opacity="0.5" />
+                    <text x={x + 5} y="440" fontSize="9" fill="#6b7280">
+                      {timeInSeconds}s
+                    </text>
+                  </g>
+                );
+              });
+            })()}
 
-              const x = (rpeak / data.samples.length) * totalWidth;
-              const width = ((data.r_peaks![i + 1] - rpeak) / data.samples.length) * totalWidth;
+            {/* Heart Rate labels - Only show every 4 seconds */}
+            {(() => {
+              let lastLabelTime = -4; // Initialize to show first label immediately
+              // Calculate total duration in seconds
+              const totalDurationSeconds = data.samples.length / data.fs;
 
-              return (
-                <g key={`hr-${i}`}>
-                  {/* Highlight box */}
-                  <rect
-                    x={x}
-                    y="0"
-                    width={width}
-                    height="450"
-                    fill={fillColor}
-                    stroke={strokeColor}
-                    strokeWidth={isBradycardia ? 2 : 1}
-                    strokeDasharray={isBradycardia ? "5,5" : "none"}
-                  />
+              return data.r_peaks && data.r_peaks.length > 1 && data.r_peaks.slice(0, -1).map((rpeak, i) => {
+                const rrInterval = (data.r_peaks![i + 1] - rpeak) / data.fs;
+                const hr = 60 / rrInterval;
 
-                  {/* HR label (only if box is wide enough) */}
-                  {width > 30 && (
-                    <g>
-                      {/* Label background */}
-                      <rect
-                        x={x + width / 2 - 25}
-                        y="8"
-                        width="50"
-                        height="18"
-                        fill={labelBgColor}
-                        rx="3"
-                        opacity="0.95"
-                      />
-                      {/* HR text */}
-                      <text
-                        x={x + width / 2}
-                        y="20"
-                        fontSize="11"
-                        fontWeight="bold"
-                        fill="#ffffff"
-                        textAnchor="middle"
+                // Color coding: Red for bradycardia (< 60), Green for normal (>= 60)
+                const isBradycardia = hr < 60;
+                const labelBgColor = isBradycardia ? '#ef4444' : '#22c55e';
+
+                // Calculate position based on TIME in seconds, not sample index
+                const timeInSeconds = rpeak / data.fs;
+                const nextTimeInSeconds = data.r_peaks![i + 1] / data.fs;
+                const x = (timeInSeconds / totalDurationSeconds) * totalWidth;
+                const width = ((nextTimeInSeconds - timeInSeconds) / totalDurationSeconds) * totalWidth;
+
+                // Only show label every 4 seconds
+                const timeFromStart = timeInSeconds;
+                const showLabel = (timeFromStart - lastLabelTime) >= 4;
+
+                if (showLabel) {
+                  lastLabelTime = timeFromStart;
+                }
+
+                return (
+                  <g key={`hr-${i}`}>
+                    {/* HR label (only every 4 seconds) */}
+                    {showLabel && (
+                      <g
+                        onMouseEnter={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setHoveredBpmLabel({
+                            hr: Math.round(hr),
+                            x: rect.left + rect.width / 2,
+                            y: rect.top
+                          });
+                        }}
+                        onMouseLeave={() => setHoveredBpmLabel(null)}
+                        style={{ cursor: 'pointer' }}
                       >
-                        {hr.toFixed(0)} bpm
-                      </text>
-                    </g>
-                  )}
-                </g>
-              );
-            })}
+                        {/* Label background */}
+                        <rect
+                          x={x + width / 2 - 25}
+                          y="8"
+                          width="50"
+                          height="18"
+                          fill={labelBgColor}
+                          rx="3"
+                          opacity="0.95"
+                        />
+                        {/* HR text */}
+                        <text
+                          x={x + width / 2}
+                          y="20"
+                          fontSize="11"
+                          fontWeight="bold"
+                          fill="#ffffff"
+                          textAnchor="middle"
+                        >
+                          {hr.toFixed(0)} bpm
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                );
+              });
+            })()}
           </svg>
         </div>
 
@@ -852,6 +1024,71 @@ function CombinedECGStrip({ data, episode }: { data: ECGData | null; episode: an
           >
             <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-full">
               <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-blue-600" />
+            </div>
+          </div>
+        )}
+
+        {/* Explainability Tooltip Overlay */}
+        {hoveredBpmLabel && episode && (
+          <div
+            className="fixed z-50 pointer-events-none"
+            style={{
+              left: hoveredBpmLabel.x,
+              top: hoveredBpmLabel.y - 10,
+              transform: 'translate(-50%, -100%)',
+            }}
+          >
+            <div className="bg-gray-900 text-white px-4 py-3 rounded-lg shadow-2xl max-w-md border border-gray-700">
+              {/* Arrow pointing down */}
+              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
+                <div className="w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-gray-900" />
+              </div>
+
+              {/* Heart Rate Info */}
+              <div className="flex items-center space-x-2 mb-2">
+                <span className={`inline-block px-2 py-1 rounded text-xs font-bold ${
+                  hoveredBpmLabel.hr < 60 ? 'bg-red-500' : 'bg-green-500'
+                }`}>
+                  {hoveredBpmLabel.hr} bpm
+                </span>
+                <span className="text-xs text-gray-400">
+                  {hoveredBpmLabel.hr < 40 ? 'Severe' : hoveredBpmLabel.hr < 50 ? 'Moderate' : hoveredBpmLabel.hr < 60 ? 'Mild' : 'Normal'}
+                </span>
+              </div>
+
+              {/* AI Explanation */}
+              <div className="text-sm leading-relaxed">
+                <div className="flex items-start space-x-2">
+                  {loadingExplanation ? (
+                    <>
+                      <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-purple-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <p className="text-gray-400 italic">Generating AI explanation...</p>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10 2a8 8 0 100 16 8 8 0 000-16zM9 9a1 1 0 012 0v4a1 1 0 11-2 0V9zm1-4a1 1 0 100 2 1 1 0 000-2z"/>
+                      </svg>
+                      <p className="text-gray-200">
+                        {llmExplanation || `Loading explanation for ${hoveredBpmLabel.hr} bpm...`}
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Detection Criteria */}
+              <div className="mt-3 pt-3 border-t border-gray-700 text-xs text-gray-400">
+                <div className="flex items-center space-x-2">
+                  <span>Detected by:</span>
+                  <span className="font-mono bg-gray-800 px-2 py-0.5 rounded">
+                    {hoveredBpmLabel.hr < 60 ? 'HR < 60 bpm' : 'Normal range'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}

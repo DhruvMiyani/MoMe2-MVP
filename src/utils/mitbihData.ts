@@ -5,6 +5,7 @@
 
 import { Episode, ECGData, QualityFlags } from '../types';
 import { loadMITBIHRecord, detectBradycardiaSegments, convertToECGData } from './mitbih';
+import { generateLLMExplanation, formatExplanation } from './explainabilityAgent';
 
 // TOP 10 patients with most bradycardia (sorted by bradycardia beat count)
 const MITBIH_PATIENTS = ['117', '124', '123', '108', '113', '202', '121', '201', '106', '114'];
@@ -80,8 +81,13 @@ function determineStatus(
  * Load MIT-BIH episodes from real data
  * @param maxEpisodes Maximum number of episodes to load
  * @param loadAll If true, loads all 6 patients; if false, loads only 3 high-bradycardia patients
+ * @param useLLMExplanations If true, uses GPT-4 to generate clinical explanations (requires API key)
  */
-export async function loadMITBIHEpisodes(maxEpisodes: number = 25, loadAll: boolean = false): Promise<Episode[]> {
+export async function loadMITBIHEpisodes(
+  maxEpisodes: number = 25,
+  loadAll: boolean = false,
+  useLLMExplanations: boolean = false
+): Promise<Episode[]> {
   const episodes: Episode[] = [];
   const recordsToUse = loadAll ? ALL_MITBIH_PATIENTS : MITBIH_PATIENTS;
 
@@ -113,6 +119,30 @@ export async function loadMITBIHEpisodes(maxEpisodes: number = 25, loadAll: bool
         const quality = getQualityFlags();
         const status = determineStatus(segment.minHR, quality);
 
+        // Generate explanation (LLM or fallback)
+        let explanation: string;
+        if (useLLMExplanations) {
+          console.log(`  Generating LLM explanation for episode ${recordName}-${segment.startSample}...`);
+          try {
+            const llmResponse = await generateLLMExplanation({
+              segment,
+              quality,
+              detectionCriteria: {
+                hrThreshold: 60,
+                minBeats: 4,
+                minDuration: 3,
+              },
+            });
+            explanation = formatExplanation(llmResponse);
+            console.log(`  ✓ LLM explanation: "${explanation}"`);
+          } catch (error) {
+            console.error(`  ✗ LLM failed, using fallback:`, error);
+            explanation = createExplanation(segment.avgHR, segment.minHR, quality);
+          }
+        } else {
+          explanation = createExplanation(segment.avgHR, segment.minHR, quality);
+        }
+
         // Use actual MIT-BIH recording date (1975-1979 era)
         // For demo purposes, using 2024-01-15 as a reference date
         const baseDate = new Date('2024-01-15T08:00:00Z');
@@ -132,7 +162,7 @@ export async function loadMITBIHEpisodes(maxEpisodes: number = 25, loadAll: bool
           avg_hr: segment.avgHR,
           quality,
           model_conf: 1.0,  // MIT-BIH annotations are ground truth (100% confidence)
-          explanation: createExplanation(segment.avgHR, segment.minHR, quality),
+          explanation,
           status,
         };
 
