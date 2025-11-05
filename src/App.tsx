@@ -22,7 +22,8 @@ function App() {
         console.log('Loading MIT-BIH episodes...');
 
         // Set a timeout to prevent infinite loading (30 seconds)
-        const loadPromise = loadMITBIHEpisodes(100);
+        // Load with loadAll=true to get all arrhythmia types (not just brady)
+        const loadPromise = loadMITBIHEpisodes(100, true); // loadAll = true
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutId = window.setTimeout(() => {
             reject(new Error('Loading MIT-BIH data timed out after 30 seconds'));

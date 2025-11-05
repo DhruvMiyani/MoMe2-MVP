@@ -11,8 +11,50 @@ import { orchestrateDetection, DetectionResult } from './orchestrationNode';
 // TOP 10 patients with most bradycardia (sorted by bradycardia beat count)
 const MITBIH_PATIENTS = ['117', '124', '123', '108', '113', '202', '121', '201', '106', '114'];
 
-// All available patient records (same as MITBIH_PATIENTS)
-const ALL_MITBIH_PATIENTS = ['117', '124', '123', '108', '113', '202', '121', '201', '106', '114'];
+// All available patient records - PRIORITIZED by arrhythmia diversity
+// First 15 records have the best examples of each arrhythmia type
+const ALL_MITBIH_PATIENTS = [
+  // VTac-rich records (high V beat count)
+  '200', // VTac: 826 V beats (most VTac episodes)
+  '208', // VTac: 992 V beats + 373 fusion beats (sustained VTac)
+  '207', // VTac: 105 V beats with bundle branch blocks
+
+  // PAC-rich records (high A beat count)
+  '209', // PAC: 383 A beats (most PAC episodes)
+  '100', // PAC: 33 A beats (clean PAC examples)
+
+  // AFib candidates (mixed rhythm, a-beats, irregularity)
+  '201', // AFib: 97 'a' beats, mixed rhythm
+  '203', // AFib: irregular rhythm
+  '210', // AFib: 22 'a' beats
+
+  // Bradycardia records
+  '117', // Bradycardia
+  '124', // Bradycardia
+  '123', // Bradycardia
+
+  // Mixed arrhythmias
+  '221', // VTac + PACs: 396 V beats
+  '217', // VTac + AFib: 162 V beats, paced rhythm
+  '219', // VTac + AFib
+  '222', // PACs
+
+  // Additional records
+  '106', // Bradycardia
+  '108', // Bradycardia
+  '113', // Bradycardia
+  '114', // Bradycardia
+  '119', // PACs, sinus arrhythmia
+  '121', // Bradycardia
+  '202', // Bradycardia
+  '213', // VTac, fusion beats
+  '214', // VTac
+  '215', // VTac
+  '223', // VTac
+  '228', // VTac
+  '231', // AV block
+  '233', // VTac
+];
 
 /**
  * Get quality flags from signal analysis
