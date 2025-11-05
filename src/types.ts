@@ -11,7 +11,7 @@ export interface Episode {
   episode_id: string;
   recording_id: string;
   patient_id?: string;      // Patient identifier (e.g., MIT-BIH record number)
-  type: 'brady';
+  type: 'brady' | 'tachy' | 'pac' | 'vtac' | 'afib' | 'normal';
   start_ts: Date;
   end_ts: Date;
   start_sample: number;

@@ -42,6 +42,8 @@ const MITBIH_PATIENT_INFO: Record<string, PatientInfo> = {
   }
 };
 
+type ArrhythmiaFilter = 'all' | 'brady' | 'tachy' | 'pac' | 'vtac' | 'afib' | 'normal';
+
 export default function ClinicalDashboard() {
   const { episodes, selectedEpisodeId, setSelectedEpisodeId } = useStore();
   const [selectedDate, setSelectedDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -51,6 +53,7 @@ export default function ClinicalDashboard() {
   const [allEpisodes, setAllEpisodes] = useState<typeof episodes>([]);
   const [loadingAllEpisodes, setLoadingAllEpisodes] = useState(false);
   const [hrTrendData, setHrTrendData] = useState<number[]>([]);
+  const [selectedArrhythmiaFilter, setSelectedArrhythmiaFilter] = useState<ArrhythmiaFilter>('all');
 
   // Get current episode or first one from filtered episodes
   const currentEpisode = selectedEpisodeId
@@ -80,22 +83,32 @@ export default function ClinicalDashboard() {
     loadAllEps();
   }, [selectedTab, allEpisodes.length, loadingAllEpisodes]);
 
-  // Filter episodes based on selected tab
+  // Filter episodes based on selected tab and arrhythmia type
   const filteredEpisodes = useMemo(() => {
+    let baseEpisodes: typeof episodes = [];
+
     if (selectedTab === 'summary' || selectedTab === 'new') {
       // Show only the 3 high-bradycardia patients (default episodes)
-      return selectedTab === 'new'
+      baseEpisodes = selectedTab === 'new'
         ? episodes.filter(ep => ep.status === 'needs_review')
         : episodes;
     } else if (selectedTab === 'all') {
       // Show all episodes from all 6 patients
-      return allEpisodes.length > 0 ? allEpisodes : episodes;
+      baseEpisodes = allEpisodes.length > 0 ? allEpisodes : episodes;
     } else if (selectedTab === 'discarded') {
       // Show denied episodes
-      return [...episodes, ...allEpisodes].filter(ep => ep.status === 'denied');
+      baseEpisodes = [...episodes, ...allEpisodes].filter(ep => ep.status === 'denied');
+    } else {
+      baseEpisodes = episodes;
     }
-    return episodes;
-  }, [selectedTab, episodes, allEpisodes]);
+
+    // Apply arrhythmia type filter
+    if (selectedArrhythmiaFilter === 'all') {
+      return baseEpisodes;
+    } else {
+      return baseEpisodes.filter(ep => ep.type === selectedArrhythmiaFilter);
+    }
+  }, [selectedTab, episodes, allEpisodes, selectedArrhythmiaFilter]);
 
   // Group episodes by patient (define BEFORE using it)
   const episodesByPatient = useMemo(() => {
@@ -474,11 +487,79 @@ export default function ClinicalDashboard() {
           </div>
 
           {/* Event Header */}
-          <div className="bg-pink-100 px-6 py-3 border-b border-pink-200 flex items-center justify-between flex-shrink-0">
+          <div className={`px-6 py-3 border-b flex items-center justify-between flex-shrink-0 ${
+            currentEpisode.type === 'brady' ? 'bg-pink-100 border-pink-200' :
+            currentEpisode.type === 'tachy' ? 'bg-orange-100 border-orange-200' :
+            currentEpisode.type === 'vtac' ? 'bg-red-100 border-red-300' :
+            currentEpisode.type === 'afib' ? 'bg-purple-100 border-purple-200' :
+            currentEpisode.type === 'pac' ? 'bg-yellow-100 border-yellow-200' :
+            'bg-green-100 border-green-200'
+          }`}>
             <div className="flex items-center space-x-4">
-              <span className="font-semibold text-gray-800 text-sm">
-                {currentEpisode.avg_hr < 60 ? 'BRADY' : currentEpisode.avg_hr > 100 ? 'TACHY' : 'OTHER'}
-              </span>
+              {/* Arrhythmia Type Toggle */}
+              <div className="flex items-center bg-white rounded-lg border border-gray-300 shadow-sm">
+                <button
+                  onClick={() => setSelectedArrhythmiaFilter('all')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-l-lg transition-colors ${
+                    selectedArrhythmiaFilter === 'all'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  ALL
+                </button>
+                <button
+                  onClick={() => setSelectedArrhythmiaFilter('brady')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors border-l border-gray-300 ${
+                    selectedArrhythmiaFilter === 'brady'
+                      ? 'bg-pink-500 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  BRADY
+                </button>
+                <button
+                  onClick={() => setSelectedArrhythmiaFilter('tachy')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors border-l border-gray-300 ${
+                    selectedArrhythmiaFilter === 'tachy'
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  TACHY
+                </button>
+                <button
+                  onClick={() => setSelectedArrhythmiaFilter('pac')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors border-l border-gray-300 ${
+                    selectedArrhythmiaFilter === 'pac'
+                      ? 'bg-yellow-500 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  PAC
+                </button>
+                <button
+                  onClick={() => setSelectedArrhythmiaFilter('vtac')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors border-l border-gray-300 ${
+                    selectedArrhythmiaFilter === 'vtac'
+                      ? 'bg-red-600 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  VTAC
+                </button>
+                <button
+                  onClick={() => setSelectedArrhythmiaFilter('afib')}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors border-l border-gray-300 rounded-r-lg ${
+                    selectedArrhythmiaFilter === 'afib'
+                      ? 'bg-purple-500 text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  AFIB
+                </button>
+              </div>
+
               <span className="text-sm text-gray-700">
                 {format(currentEpisode.start_ts, 'MM/dd/yyyy HH:mm:ss a')} (EST)
               </span>

@@ -6,6 +6,7 @@
 import { Episode, ECGData, QualityFlags } from '../types';
 import { loadMITBIHRecord, detectBradycardiaSegments, convertToECGData } from './mitbih';
 import { generateLLMExplanation, formatExplanation } from './explainabilityAgent';
+import { orchestrateDetection, DetectionResult } from './orchestrationNode';
 
 // TOP 10 patients with most bradycardia (sorted by bradycardia beat count)
 const MITBIH_PATIENTS = ['117', '124', '123', '108', '113', '202', '121', '201', '106', '114'];
@@ -100,59 +101,34 @@ export async function loadMITBIHEpisodes(
       console.log(`Loading record ${recordName}...`);
       const record = await loadMITBIHRecord(recordName);
 
-      // Detect bradycardia segments
-      const segments = detectBradycardiaSegments(record);
+      // Run orchestration to detect ALL arrhythmia types
+      const detectionResult = await orchestrateDetection(record);
 
-      console.log(`  Found ${segments.length} bradycardia segments in record ${recordName}`);
+      console.log(`  Orchestration complete for ${recordName}:`);
+      console.log(`    - Bradycardia: ${detectionResult.detections.bradycardia.length} segments`);
+      console.log(`    - Tachycardia: ${detectionResult.detections.tachycardia.length} segments`);
+      console.log(`    - PAC: ${detectionResult.detections.pac?.total_pacs || 0} events`);
+      console.log(`    - VTac: ${detectionResult.detections.vtac.length} segments`);
+      console.log(`    - AFib: ${detectionResult.detections.afib.length} segments`);
 
-      // If loading all and no segments found, create a placeholder episode to show patient
-      if (loadAll && segments.length === 0) {
-        console.log(`  Patient ${recordName}: No bradycardia episodes (other arrhythmia or normal rhythm)`);
-        // Skip for now - we'll only show patients with actual bradycardia episodes
-      }
+      // Create episodes from all detected segments
 
-      // Convert each segment to an Episode
-      for (const segment of segments) {
+      // 1. Bradycardia episodes
+      for (const segment of detectionResult.detections.bradycardia) {
         if (episodes.length >= maxEpisodes && !loadAll) break;
 
-        // Get quality flags (all false for MIT-BIH curated data)
         const quality = getQualityFlags();
         const status = determineStatus(segment.minHR, quality);
+        const explanation = createExplanation(segment.avgHR, segment.minHR, quality);
 
-        // Generate explanation (LLM or fallback)
-        let explanation: string;
-        if (useLLMExplanations) {
-          console.log(`  Generating LLM explanation for episode ${recordName}-${segment.startSample}...`);
-          try {
-            const llmResponse = await generateLLMExplanation({
-              segment,
-              quality,
-              detectionCriteria: {
-                hrThreshold: 60,
-                minBeats: 4,
-                minDuration: 3,
-              },
-            });
-            explanation = formatExplanation(llmResponse);
-            console.log(`  ✓ LLM explanation: "${explanation}"`);
-          } catch (error) {
-            console.error(`  ✗ LLM failed, using fallback:`, error);
-            explanation = createExplanation(segment.avgHR, segment.minHR, quality);
-          }
-        } else {
-          explanation = createExplanation(segment.avgHR, segment.minHR, quality);
-        }
-
-        // Use actual MIT-BIH recording date (1975-1979 era)
-        // For demo purposes, using 2024-01-15 as a reference date
         const baseDate = new Date('2024-01-15T08:00:00Z');
         const startTs = new Date(baseDate.getTime() + segment.startTime * 1000);
         const endTs = new Date(baseDate.getTime() + segment.endTime * 1000);
 
         const episode: Episode = {
-          episode_id: `mitbih-${recordName}-${segment.startSample}`,
+          episode_id: `mitbih-${recordName}-brady-${segment.startSample}`,
           recording_id: `mitbih-${recordName}`,
-          patient_id: `Patient ${recordName}`,  // e.g., "Patient 106"
+          patient_id: `Patient ${recordName}`,
           type: 'brady',
           start_ts: startTs,
           end_ts: endTs,
@@ -161,9 +137,136 @@ export async function loadMITBIHEpisodes(
           min_hr: segment.minHR,
           avg_hr: segment.avgHR,
           quality,
-          model_conf: 1.0,  // MIT-BIH annotations are ground truth (100% confidence)
+          model_conf: 1.0,
           explanation,
           status,
+        };
+
+        episodes.push(episode);
+      }
+
+      // 2. Tachycardia episodes
+      for (const segment of detectionResult.detections.tachycardia) {
+        if (episodes.length >= maxEpisodes && !loadAll) break;
+
+        const quality = getQualityFlags();
+        const explanation = `${segment.type === 'svt' ? 'Supraventricular tachycardia' : 'Sinus tachycardia'} detected (avg HR: ${segment.avgHR} bpm, max: ${segment.maxHR} bpm)`;
+
+        const baseDate = new Date('2024-01-15T08:00:00Z');
+        const startTs = new Date(baseDate.getTime() + segment.startTime * 1000);
+        const endTs = new Date(baseDate.getTime() + segment.endTime * 1000);
+
+        const episode: Episode = {
+          episode_id: `mitbih-${recordName}-tachy-${segment.startSample}`,
+          recording_id: `mitbih-${recordName}`,
+          patient_id: `Patient ${recordName}`,
+          type: 'tachy',
+          start_ts: startTs,
+          end_ts: endTs,
+          start_sample: segment.startSample,
+          end_sample: segment.endSample,
+          min_hr: segment.minHR,
+          avg_hr: segment.avgHR,
+          quality,
+          model_conf: segment.confidence,
+          explanation,
+          status: 'needs_review',
+        };
+
+        episodes.push(episode);
+      }
+
+      // 3. VTac episodes (critical priority)
+      for (const segment of detectionResult.detections.vtac) {
+        if (episodes.length >= maxEpisodes && !loadAll) break;
+
+        const quality = getQualityFlags();
+        const explanation = `${segment.sustained ? 'SUSTAINED' : 'Non-sustained'} ventricular tachycardia detected (HR: ${segment.heart_rate} bpm, QRS: ${segment.qrs_width_ms.toFixed(0)}ms)${segment.critical_priority ? ' - CRITICAL' : ''}`;
+
+        const baseDate = new Date('2024-01-15T08:00:00Z');
+        const startTs = new Date(baseDate.getTime() + segment.startTime * 1000);
+        const endTs = new Date(baseDate.getTime() + segment.endTime * 1000);
+
+        const episode: Episode = {
+          episode_id: `mitbih-${recordName}-vtac-${segment.startSample}`,
+          recording_id: `mitbih-${recordName}`,
+          patient_id: `Patient ${recordName}`,
+          type: 'vtac',
+          start_ts: startTs,
+          end_ts: endTs,
+          start_sample: segment.startSample,
+          end_sample: segment.endSample,
+          min_hr: segment.heart_rate,
+          avg_hr: segment.heart_rate,
+          quality,
+          model_conf: segment.confidence,
+          explanation,
+          status: 'needs_review',
+        };
+
+        episodes.push(episode);
+      }
+
+      // 4. AFib episodes
+      for (const segment of detectionResult.detections.afib) {
+        if (episodes.length >= maxEpisodes && !loadAll) break;
+
+        const quality = getQualityFlags();
+        const explanation = `Atrial fibrillation${segment.ventricular_response === 'rapid' ? ' with rapid ventricular response (RVR)' : ''} detected (mean HR: ${segment.mean_hr} bpm)`;
+
+        const baseDate = new Date('2024-01-15T08:00:00Z');
+        const startTs = new Date(baseDate.getTime() + segment.startTime * 1000);
+        const endTs = new Date(baseDate.getTime() + segment.endTime * 1000);
+
+        const episode: Episode = {
+          episode_id: `mitbih-${recordName}-afib-${segment.startSample}`,
+          recording_id: `mitbih-${recordName}`,
+          patient_id: `Patient ${recordName}`,
+          type: 'afib',
+          start_ts: startTs,
+          end_ts: endTs,
+          start_sample: segment.startSample,
+          end_sample: segment.endSample,
+          min_hr: segment.mean_hr,
+          avg_hr: segment.mean_hr,
+          quality,
+          model_conf: segment.confidence,
+          explanation,
+          status: 'needs_review',
+        };
+
+        episodes.push(episode);
+      }
+
+      // 5. PAC episodes (aggregate into single episode if present)
+      if (detectionResult.detections.pac && detectionResult.detections.pac.total_pacs > 0) {
+        const pacSummary = detectionResult.detections.pac;
+        const quality = getQualityFlags();
+        const explanation = `${pacSummary.total_pacs} premature atrial contractions detected (${pacSummary.pacs_per_hour.toFixed(1)} per hour)${pacSummary.frequent ? ' - FREQUENT PACs' : ''}`;
+
+        // Use first PAC event for timing
+        const firstPac = pacSummary.events[0];
+        const lastPac = pacSummary.events[pacSummary.events.length - 1];
+
+        const baseDate = new Date('2024-01-15T08:00:00Z');
+        const startTs = new Date(baseDate.getTime() + firstPac.time * 1000);
+        const endTs = new Date(baseDate.getTime() + lastPac.time * 1000);
+
+        const episode: Episode = {
+          episode_id: `mitbih-${recordName}-pac-summary`,
+          recording_id: `mitbih-${recordName}`,
+          patient_id: `Patient ${recordName}`,
+          type: 'pac',
+          start_ts: startTs,
+          end_ts: endTs,
+          start_sample: firstPac.sample,
+          end_sample: lastPac.sample,
+          min_hr: 60, // PACs don't have sustained HR changes
+          avg_hr: 70,
+          quality,
+          model_conf: 0.85,
+          explanation,
+          status: pacSummary.frequent ? 'needs_review' : 'auto_approved',
         };
 
         episodes.push(episode);
