@@ -3,8 +3,8 @@ import { Episode, Review, ECGData } from './types';
 
 interface AppState {
   // Current view
-  currentView: 'worklist' | 'review' | 'analytics';
-  setCurrentView: (view: 'worklist' | 'review' | 'analytics') => void;
+  currentView: 'worklist' | 'review' | 'analytics' | 'qa';
+  setCurrentView: (view: 'worklist' | 'review' | 'analytics' | 'qa') => void;
 
   // Episodes
   episodes: Episode[];
@@ -40,7 +40,7 @@ interface AppState {
 
 export const useStore = create<AppState>((set, get) => ({
   // View state
-  currentView: 'worklist',
+  currentView: 'qa', // Start with QA view to show the replicated UI
   setCurrentView: (view) => set({ currentView: view }),
 
   // Episodes

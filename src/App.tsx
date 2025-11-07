@@ -3,6 +3,7 @@ import { useStore } from './store';
 import { loadMITBIHEpisodes } from './utils/mitbihData';
 import ClinicalDashboard from './components/ClinicalDashboard';
 import Analytics from './components/Analytics';
+import QADashboard from './components/QADashboard';
 
 function App() {
   const currentView = useStore((state) => state.currentView);
@@ -93,6 +94,9 @@ function App() {
 
   return (
     <div className="min-h-screen bg-white">
+      {/* QA Dashboard - new replicated UI */}
+      {currentView === 'qa' && <QADashboard />}
+
       {/* Clinical Dashboard is the main screen */}
       {(currentView === 'worklist' || currentView === 'review') && <ClinicalDashboard />}
 

@@ -83,7 +83,7 @@ Format your response as JSON:
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-5', // GPT-4o (Omni) - latest and most advanced model
+        model: 'gpt-5', // GPT-5
         messages: [
           {
             role: 'system',

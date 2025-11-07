@@ -6,6 +6,7 @@ export default function Navigation() {
   const { currentView, setCurrentView } = useStore();
 
   const navItems = [
+    { id: 'qa' as const, label: 'QA System', icon: Activity },
     { id: 'worklist' as const, label: 'Triage Worklist', icon: List },
     { id: 'review' as const, label: 'Event Review', icon: Activity },
     { id: 'analytics' as const, label: 'Analytics', icon: BarChart3 },
